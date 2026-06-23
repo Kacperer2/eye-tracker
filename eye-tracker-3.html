@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Eye Tracker v2</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background:#0a0a0f;
+  color:#e0e0e0;
+  font-family:'Segoe UI', system-ui, sans-serif;
+  height:100dvh;
+  overflow:hidden;
+  touch-action:none;
+  user-select:none;
+}
+
+#screen { position:relative; width:100vw; height:100dvh; overflow:hidden; }
+
+video { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+
+/* ── KURSOR ── */
+#cursor {
+  position:absolute;
+  width:50px; height:50px;
+  border-radius:50%;
+  background:radial-gradient(circle, rgba(99,211,255,0.95) 0%, rgba(99,211,255,0.15) 65%, transparent 100%);
+  border:2px solid rgba(99,211,255,0.9);
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+  z-index:100;
+  box-shadow:0 0 22px rgba(99,211,255,0.55);
+  display:none;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+#cursor.dwelling {
+  background:radial-gradient(circle, rgba(255,200,50,0.95) 0%, rgba(255,200,50,0.15) 65%, transparent 100%);
+  border-color:rgba(255,200,50,0.9);
+  box-shadow:0 0 28px rgba(255,200,50,0.6);
+}
+
+/* pierścień postępu SVG */
+#progress-ring {
+  position:absolute;
+  width:70px; height:70px;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+  z-index:99;
+  display:none;
+}
+#progress-ring circle.track {
+  fill:none; stroke:rgba(255,255,255,0.08); stroke-width:3;
+}
+#progress-ring circle.fill {
+  fill:none; stroke:#ffcc33; stroke-width:3;
+  stroke-dasharray:188.5;
+  stroke-dashoffset:188.5;
+  stroke-linecap:round;
+  transform-origin:35px 35px;
+  transform:rotate(-90deg);
+  transition:stroke-dashoffset 0.05s linear;
+}
+
+/* ── EKRAN STARTOWY ── */
+#start-screen {
+  position:absolute; inset:0;
+  background:#0a0a0f;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  gap:20px; z-index:200; padding:28px; text-align:center;
+}
+#start-screen h1 { font-size:2rem; font-weight:700; color:#63d3ff; letter-spacing:-0.02em; text-shadow:0 0 30px rgba(99,211,255,0.35); }
+#start-screen p { font-size:0.9rem; color:#666; max-width:300px; line-height:1.65; }
+#start-btn {
+  background:linear-gradient(135deg,#63d3ff,#3a8fff);
+  border:none; color:#fff; font-size:1.05rem; font-weight:600;
+  padding:15px 38px; border-radius:50px; cursor:pointer;
+  box-shadow:0 4px 22px rgba(99,211,255,0.3);
+  touch-action:manipulation;
+}
+#start-btn:active { transform:scale(0.96); }
+
+/* ── ŁADOWANIE ── */
+#loading {
+  position:absolute; inset:0; background:#0a0a0f;
+  display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:16px; z-index:300;
+}
+#loading p { color:#666; font-size:0.9rem; }
+.spinner {
+  width:38px; height:38px;
+  border:3px solid rgba(99,211,255,0.12);
+  border-top-color:#63d3ff;
+  border-radius:50%;
+  animation:spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ── KALIBRACJA ── */
+#cal-screen {
+  position:absolute; inset:0; background:#0a0a0f;
+  display:none; flex-direction:column;
+  align-items:center; justify-content:center;
+  z-index:250;
+}
+#cal-instruction {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  text-align:center; pointer-events:none;
+}
+#cal-instruction h2 { color:#63d3ff; font-size:1.2rem; margin-bottom:8px; }
+#cal-instruction p { color:#666; font-size:0.82rem; max-width:260px; line-height:1.55; }
+
+.cal-dot {
+  position:absolute;
+  width:36px; height:36px;
+  border-radius:50%;
+  background:#ffcc33;
+  box-shadow:0 0 18px rgba(255,200,50,0.7);
+  transform:translate(-50%,-50%);
+  cursor:pointer;
+  display:none;
+}
+.cal-dot.active { display:block; animation:calPulse 0.8s ease infinite; }
+@keyframes calPulse {
+  0%,100% { transform:translate(-50%,-50%) scale(1); }
+  50%      { transform:translate(-50%,-50%) scale(1.25); }
+}
+
+#cal-progress {
+  position:absolute; bottom:40px; left:50%; transform:translateX(-50%);
+  display:flex; gap:10px;
+}
+.cal-pip {
+  width:8px; height:8px; border-radius:50%;
+  background:rgba(255,255,255,0.15);
+  transition:background 0.2s;
+}
+.cal-pip.done { background:#63d3ff; }
+
+#cal-fill {
+  position:absolute;
+  width:36px; height:36px;
+  border-radius:50%;
+  background:conic-gradient(#63d3ff 0%, transparent 0%);
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+  display:none;
+}
+
+/* ── STATUS BAR ── */
+#status-bar {
+  position:absolute; top:12px; left:50%; transform:translateX(-50%);
+  background:rgba(255,255,255,0.055);
+  border:1px solid rgba(255,255,255,0.09);
+  border-radius:50px; padding:5px 16px;
+  font-size:0.75rem; color:#777; z-index:50;
+  white-space:nowrap; backdrop-filter:blur(8px);
+}
+#status-bar span { color:#63d3ff; font-weight:600; }
+
+/* ── MINI PODGLĄD ── */
+#preview {
+  position:absolute; bottom:14px; right:14px;
+  width:88px; height:66px; border-radius:10px;
+  border:1.5px solid rgba(99,211,255,0.25);
+  overflow:hidden; z-index:50; opacity:0.65; display:none;
+}
+#preview video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+
+/* ── PRZYCISKI DEMO ── */
+.demo-area {
+  position:absolute; inset:0;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  gap:28px; padding:72px 20px 90px;
+}
+.demo-label { font-size:0.75rem; color:#444; text-transform:uppercase; letter-spacing:0.1em; }
+.gaze-btn-row { display:flex; gap:20px; flex-wrap:wrap; justify-content:center; }
+.gaze-btn {
+  width:88px; height:88px; border-radius:16px;
+  border:2px solid rgba(255,255,255,0.09);
+  background:rgba(255,255,255,0.03);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:5px;
+  font-size:0.72rem; color:#666;
+  position:relative; overflow:hidden;
+  transition:border-color 0.2s, background 0.2s, color 0.2s;
+}
+.gaze-btn .icon { font-size:1.75rem; }
+.gaze-btn.hovered { border-color:rgba(99,211,255,0.55); background:rgba(99,211,255,0.07); color:#63d3ff; }
+.gaze-btn.activated { border-color:#ffcc33; background:rgba(255,200,50,0.14); color:#ffcc33; animation:pop 0.35s ease; }
+@keyframes pop { 0%{transform:scale(1)} 50%{transform:scale(1.13)} 100%{transform:scale(1)} }
+.gaze-btn .pbar { position:absolute; bottom:0; left:0; height:3px; background:#63d3ff; width:0%; transition:width 0.04s linear; }
+
+/* ── PRZYCISK REKALIBRACJI ── */
+#recal-btn {
+  position:absolute; bottom:14px; left:14px;
+  background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.1);
+  color:#555; font-size:0.72rem; padding:7px 14px;
+  border-radius:20px; cursor:pointer; z-index:50;
+  display:none; touch-action:manipulation;
+}
+#recal-btn:active { background:rgba(255,255,255,0.1); }
+
+/* ── LOG ── */
+#log {
+  position:absolute; top:50px; left:50%; transform:translateX(-50%);
+  font-size:0.7rem; color:#3a5a6a; z-index:50;
+  text-align:center; pointer-events:none;
+}
+</style>
+</head>
+<body>
+<div id="screen">
+
+  <video id="video" autoplay playsinline muted></video>
+
+  <!-- EKRAN STARTOWY -->
+  <div id="start-screen">
+    <h1>👁️ Eye Tracker</h1>
+    <p>Śledzi ruch tęczówki, nie głowy. Przed użyciem przeprowadzisz krótką kalibrację (5 punktów).</p>
+    <button id="start-btn">Uruchom kamerę</button>
+    <p style="font-size:0.72rem;color:#333">Wymaga Chrome + HTTPS + kamera frontowa</p>
+  </div>
+
+  <!-- ŁADOWANIE -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <p id="load-msg">Ładowanie modelu AI...</p>
+  </div>
+
+  <!-- KALIBRACJA -->
+  <div id="cal-screen">
+    <div id="cal-instruction">
+      <h2>Kalibracja</h2>
+      <p>Patrz na żółtą kropkę i nie ruszaj głową.<br>Trzymaj wzrok aż zniknie.</p>
+    </div>
+    <!-- 5 punktów: środek, lewy-górny, prawy-górny, lewy-dolny, prawy-dolny -->
+    <div class="cal-dot" id="cdot-0" style="left:50%;top:50%"></div>
+    <div class="cal-dot" id="cdot-1" style="left:12%;top:12%"></div>
+    <div class="cal-dot" id="cdot-2" style="left:88%;top:12%"></div>
+    <div class="cal-dot" id="cdot-3" style="left:12%;top:88%"></div>
+    <div class="cal-dot" id="cdot-4" style="left:88%;top:88%"></div>
+    <div id="cal-fill"></div>
+    <div id="cal-progress">
+      <div class="cal-pip" id="pip-0"></div>
+      <div class="cal-pip" id="pip-1"></div>
+      <div class="cal-pip" id="pip-2"></div>
+      <div class="cal-pip" id="pip-3"></div>
+      <div class="cal-pip" id="pip-4"></div>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div id="status-bar" style="display:none">
+    Wzrok: <span id="status-text">aktywny</span>
+  </div>
+
+  <!-- KURSOR -->
+  <div id="cursor"></div>
+  <svg id="progress-ring" viewBox="0 0 70 70">
+    <circle class="track" cx="35" cy="35" r="30"/>
+    <circle class="fill" cx="35" cy="35" r="30" id="ring-fill"/>
+  </svg>
+
+  <!-- DEMO -->
+  <div class="demo-area" id="demo-area" style="display:none">
+    <div class="demo-label">Patrz na przycisk ~1.5s żeby go aktywować</div>
+    <div class="gaze-btn-row">
+      <div class="gaze-btn" id="btn-0"><span class="icon">🎮</span><span>Gry</span><div class="pbar"></div></div>
+      <div class="gaze-btn" id="btn-1"><span class="icon">🎵</span><span>Muzyka</span><div class="pbar"></div></div>
+      <div class="gaze-btn" id="btn-2"><span class="icon">📷</span><span>Kamera</span><div class="pbar"></div></div>
+    </div>
+    <div class="gaze-btn-row">
+      <div class="gaze-btn" id="btn-3"><span class="icon">🌐</span><span>Internet</span><div class="pbar"></div></div>
+      <div class="gaze-btn" id="btn-4"><span class="icon">⚙️</span><span>Ustawienia</span><div class="pbar"></div></div>
+      <div class="gaze-btn" id="btn-5"><span class="icon">📱</span><span>Telefon</span><div class="pbar"></div></div>
+    </div>
+  </div>
+
+  <!-- MINI PODGLĄD -->
+  <div id="preview"><video id="prev-vid" autoplay playsinline muted></video></div>
+
+  <!-- REKALIBRACJA -->
+  <button id="recal-btn">🎯 Kalibruj ponownie</button>
+
+  <!-- LOG -->
+  <div id="log"></div>
+</div>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// STAŁE
+// ═══════════════════════════════════════════════════════
+const DWELL_MS      = 1500;   // ms patrzenia do aktywacji
+const SMOOTH        = 0.12;   // wygładzanie kursora
+const CAL_HOLD_MS   = 1800;   // ms trzymania wzroku na punkcie kalibracji
+const CIRCUMFERENCE = 188.5;  // 2*PI*30
+
+// Indeksy MediaPipe FaceMesh (refined landmarks)
+// Tęczówka lewa: 468, prawa: 473
+// Rogi oka lewego:  133 (wewnętrzny), 33 (zewnętrzny)
+// Rogi oka prawego: 362 (wewnętrzny), 263 (zewnętrzny)
+// Powieki: L_góra=159, L_dół=145, P_góra=386, P_dół=374
+const IDX = {
+  L_IRIS:  468, R_IRIS:  473,
+  L_IN:    133, L_OUT:   33,
+  R_IN:    362, R_OUT:   263,
+  L_TOP:   159, L_BOT:   145,
+  R_TOP:   386, R_BOT:   374,
+  NOSE:    1,   CHIN:    152,  // do odejmowania ruchu głowy
+};
+
+// ═══════════════════════════════════════════════════════
+// STAN
+// ═══════════════════════════════════════════════════════
+let cursorX = innerWidth/2, cursorY = innerHeight/2;
+let targetX = cursorX,      targetY = cursorY;
+let isTracking = false;
+let currentHovered = null, gazeStart = null;
+
+// Kalibracja: dla każdego z 5 punktów zapisujemy surowy gaze (eyeX, eyeY)
+// i odpowiadające mu współrzędne ekranowe
+const CAL_POINTS = [
+  { sx:0.50, sy:0.50 },
+  { sx:0.12, sy:0.12 },
+  { sx:0.88, sy:0.12 },
+  { sx:0.12, sy:0.88 },
+  { sx:0.88, sy:0.88 },
+];
+let calSamples = [];      // surowe próbki podczas kalibracji
+let calData    = [];      // [{rawX, rawY, sx, sy}] — po kalibracji
+let calStep    = 0;
+let calHoldStart = null;
+let calDone    = false;
+
+// Parametry transformacji (liniowa regresja 2D)
+let mapX = { a:1, b:0, c:0, d:0 }; // screenX = a*rawX + b*rawY + c
+let mapY = { a:0, b:1, c:0, d:0 }; // screenY = a*rawX + b*rawY + c
+
+// ═══════════════════════════════════════════════════════
+// DOM
+// ═══════════════════════════════════════════════════════
+const video      = document.getElementById('video');
+const prevVid    = document.getElementById('prev-vid');
+const cursorEl   = document.getElementById('cursor');
+const ringEl     = document.getElementById('progress-ring');
+const ringFill   = document.getElementById('ring-fill');
+const statusEl   = document.getElementById('status-bar');
+const statusTxt  = document.getElementById('status-text');
+const startScr   = document.getElementById('start-screen');
+const loadingEl  = document.getElementById('loading');
+const loadMsg    = document.getElementById('load-msg');
+const calScreen  = document.getElementById('cal-screen');
+const calFill    = document.getElementById('cal-fill');
+const demoArea   = document.getElementById('demo-area');
+const preview    = document.getElementById('preview');
+const recalBtn   = document.getElementById('recal-btn');
+const logEl      = document.getElementById('log');
+
+// ═══════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════
+document.getElementById('start-btn').addEventListener('click', async () => {
+  startScr.style.display = 'none';
+  loadingEl.style.display = 'flex';
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:'user', width:{ideal:320}, height:{ideal:240} }
+    });
+    video.srcObject    = stream;
+    prevVid.srcObject  = stream;
+    await video.play();
+    preview.style.display = 'block';
+    initFaceMesh();
+  } catch(e) {
+    loadMsg.textContent = '❌ Brak dostępu do kamery: ' + e.message;
+  }
+});
+
+recalBtn.addEventListener('click', startCalibration);
+
+// ═══════════════════════════════════════════════════════
+// MEDIAPIPE
+// ═══════════════════════════════════════════════════════
+let latestLM = null;
+
+function initFaceMesh() {
+  loadMsg.textContent = 'Ładowanie modelu AI...';
+  const fm = new FaceMesh({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+  });
+  fm.setOptions({
+    maxNumFaces:1,
+    refineLandmarks:true,
+    minDetectionConfidence:0.55,
+    minTrackingConfidence:0.5,
+  });
+  fm.onResults(res => {
+    if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+      latestLM = res.multiFaceLandmarks[0];
+    } else {
+      latestLM = null;
+    }
+  });
+
+  const cam = new Camera(video, {
+    onFrame: async () => { await fm.send({ image:video }); },
+    width:320, height:240
+  });
+  cam.start().then(() => {
+    loadingEl.style.display = 'none';
+    startCalibration();
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// OBLICZANIE SUROWEGO SPOJRZENIA (względem oczodołu)
+// ═══════════════════════════════════════════════════════
+function getRawGaze(lm) {
+  const li = lm[IDX.L_IRIS], ri = lm[IDX.R_IRIS];
+  const lIn = lm[IDX.L_IN],  lOut = lm[IDX.L_OUT];
+  const rIn = lm[IDX.R_IN],  rOut = lm[IDX.R_OUT];
+
+  if (!li || !ri || !lIn || !lOut || !rIn || !rOut) return null;
+
+  // Szerokość oczodołu (do normalizacji)
+  const lW = Math.abs(lIn.x - lOut.x) || 0.001;
+  const rW = Math.abs(rIn.x - rOut.x) || 0.001;
+
+  // Środek oczodołu
+  const lCX = (lIn.x + lOut.x) / 2;
+  const lCY = (lIn.y + lOut.y) / 2;
+  const rCX = (rIn.x + rOut.x) / 2;
+  const rCY = (rIn.y + rOut.y) / 2;
+
+  // Względna pozycja tęczówki w oczodole (wartości ~-0.5 do +0.5)
+  const lGX = (li.x - lCX) / lW;
+  const lGY = (li.y - lCY) / lW;
+  const rGX = (ri.x - rCX) / rW;
+  const rGY = (ri.y - rCY) / rW;
+
+  // Średnia z obu oczu (lustrzane odwrócenie X dla kamery frontowej)
+  return {
+    x: -((lGX + rGX) / 2),
+    y:   (lGY + rGY) / 2,
+  };
+}
+
+// ═══════════════════════════════════════════════════════
+// KALIBRACJA
+// ═══════════════════════════════════════════════════════
+function startCalibration() {
+  calData     = [];
+  calSamples  = [];
+  calStep     = 0;
+  calHoldStart = null;
+  calDone     = false;
+  isTracking  = false;
+
+  demoArea.style.display  = 'none';
+  statusEl.style.display  = 'none';
+  cursorEl.style.display  = 'none';
+  ringEl.style.display    = 'none';
+  recalBtn.style.display  = 'none';
+  logEl.textContent       = '';
+
+  document.querySelectorAll('.cal-dot').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.cal-pip').forEach(d => d.classList.remove('done'));
+
+  calScreen.style.display = 'flex';
+
+  // Schowaj instrukcję po 2s i pokaż pierwszy punkt
+  setTimeout(() => {
+    document.getElementById('cal-instruction').style.display = 'none';
+    showCalPoint(0);
+  }, 2200);
+}
+
+function showCalPoint(i) {
+  calStep = i;
+  calSamples = [];
+  calHoldStart = null;
+
+  document.querySelectorAll('.cal-dot').forEach(d => d.classList.remove('active'));
+  calFill.style.display = 'none';
+
+  const dot = document.getElementById(`cdot-${i}`);
+  dot.classList.add('active');
+
+  // Pozycjonuj calFill na tym samym miejscu
+  calFill.style.left = dot.style.left;
+  calFill.style.top  = dot.style.top;
+  calFill.style.background = 'conic-gradient(rgba(99,211,255,0.7) 0%, transparent 0%)';
+  calFill.style.display = 'block';
+}
+
+function tickCalibration() {
+  if (!latestLM) return;
+
+  const g = getRawGaze(latestLM);
+  if (!g) return;
+
+  calSamples.push(g);
+  if (calSamples.length > 5) calSamples.shift(); // krótkie okno
+
+  if (calHoldStart === null) calHoldStart = Date.now();
+
+  const elapsed = Date.now() - calHoldStart;
+  const frac    = Math.min(elapsed / CAL_HOLD_MS, 1);
+
+  // Animacja kółka na calFill
+  calFill.style.background =
+    `conic-gradient(rgba(99,211,255,0.75) ${frac*360}deg, transparent ${frac*360}deg)`;
+
+  if (frac >= 1) {
+    // Zapisz średnią z próbek
+    const avgX = calSamples.reduce((s,v) => s+v.x, 0) / calSamples.length;
+    const avgY = calSamples.reduce((s,v) => s+v.y, 0) / calSamples.length;
+    const pt   = CAL_POINTS[calStep];
+
+    calData.push({ rawX:avgX, rawY:avgY, sx:pt.sx, sy:pt.sy });
+    document.getElementById(`pip-${calStep}`).classList.add('done');
+    document.getElementById(`cdot-${calStep}`).classList.remove('active');
+    calFill.style.display = 'none';
+    calSamples = [];
+    calHoldStart = null;
+
+    if (calStep < CAL_POINTS.length - 1) {
+      setTimeout(() => showCalPoint(calStep + 1), 300);
+    } else {
+      // Koniec kalibracji
+      fitMapping();
+      finishCalibration();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// DOPASOWANIE LINIOWE (least squares 2×2)
+// Mamy: screen = A * raw + B (osobno dla X i Y)
+// Używamy prostej wielozmiennej regresji
+// ═══════════════════════════════════════════════════════
+function fitMapping() {
+  const n = calData.length;
+  if (n < 3) return; // za mało punktów
+
+  // Dla X: sx = a*rawX + b*rawY + c
+  // Dla Y: sy = a*rawX + b*rawY + c
+  // Rozwiązujemy metodą najmniejszych kwadratów
+
+  function fitAxis(key) {
+    // Budujemy macierz [rawX, rawY, 1] i wektor [s]
+    let A11=0,A12=0,A13=0,A21=0,A22=0,A23=0,A31=0,A32=0,A33=n;
+    let b1=0,b2=0,b3=0;
+    calData.forEach(d => {
+      A11 += d.rawX*d.rawX; A12 += d.rawX*d.rawY; A13 += d.rawX;
+      A21 += d.rawX*d.rawY; A22 += d.rawY*d.rawY; A23 += d.rawY;
+      A31 += d.rawX;        A32 += d.rawY;
+      b1  += d.rawX * d[key];
+      b2  += d.rawY * d[key];
+      b3  += d[key];
+    });
+    // 3×3 liniowy układ — Cramer lub eliminacja Gaussa (uproszczona)
+    // Używamy numerycznej eliminacji Gaussa
+    const M = [
+      [A11,A12,A13,b1],
+      [A21,A22,A23,b2],
+      [A31,A32,A33,b3],
+    ];
+    for (let col=0; col<3; col++) {
+      // Szukamy pivota
+      let maxRow=col;
+      for (let r=col+1; r<3; r++) if (Math.abs(M[r][col])>Math.abs(M[maxRow][col])) maxRow=r;
+      [M[col],M[maxRow]]=[M[maxRow],M[col]];
+      if (Math.abs(M[col][col])<1e-10) continue;
+      for (let r=col+1; r<3; r++) {
+        const f=M[r][col]/M[col][col];
+        for (let c=col;c<4;c++) M[r][c]-=f*M[col][c];
+      }
+    }
+    // Back substitution
+    const x=[0,0,0];
+    for (let r=2;r>=0;r--) {
+      x[r]=M[r][3];
+      for (let c=r+1;c<3;c++) x[r]-=M[r][c]*x[c];
+      x[r]/=M[r][r]||1;
+    }
+    return { a:x[0], b:x[1], c:x[2] };
+  }
+
+  mapX = fitAxis('sx');
+  mapY = fitAxis('sy');
+}
+
+function applyMapping(rawX, rawY) {
+  const sx = mapX.a*rawX + mapX.b*rawY + mapX.c;
+  const sy = mapY.a*rawX + mapY.b*rawY + mapY.c;
+  return {
+    x: Math.max(0, Math.min(1, sx)) * innerWidth,
+    y: Math.max(0, Math.min(1, sy)) * innerHeight,
+  };
+}
+
+function finishCalibration() {
+  calScreen.style.display  = 'none';
+  demoArea.style.display   = 'flex';
+  statusEl.style.display   = 'block';
+  cursorEl.style.display   = 'block';
+  recalBtn.style.display   = 'block';
+  calDone    = true;
+  isTracking = true;
+  addLog('✅ Kalibracja gotowa');
+}
+
+// ═══════════════════════════════════════════════════════
+// GŁÓWNA PĘTLA ŚLEDZENIA
+// ═══════════════════════════════════════════════════════
+function processFrame() {
+  if (!latestLM) {
+    if (isTracking) statusTxt.textContent = 'brak twarzy';
+    requestAnimationFrame(processFrame);
+    return;
+  }
+
+  // Kalibracja w toku
+  if (!calDone && calScreen.style.display !== 'none') {
+    tickCalibration();
+    requestAnimationFrame(processFrame);
+    return;
+  }
+
+  if (!isTracking) {
+    requestAnimationFrame(processFrame);
+    return;
+  }
+
+  const g = getRawGaze(latestLM);
+  if (!g) {
+    statusTxt.textContent = 'brak oczu';
+    requestAnimationFrame(processFrame);
+    return;
+  }
+
+  // Wykrywanie mrugnięcia
+  const lEAR = Math.abs(latestLM[IDX.L_TOP].y - latestLM[IDX.L_BOT].y);
+  const rEAR = Math.abs(latestLM[IDX.R_TOP].y - latestLM[IDX.R_BOT].y);
+  const blink = (lEAR + rEAR) / 2 < 0.016;
+
+  if (blink) {
+    statusTxt.textContent = '😑 mrugnięcie';
+  } else {
+    statusTxt.textContent = '👁 śledzenie';
+  }
+
+  // Mapowanie na ekran
+  const mapped = applyMapping(g.x, g.y);
+  targetX = mapped.x;
+  targetY = mapped.y;
+
+  // Wygładzanie
+  cursorX += (targetX - cursorX) * SMOOTH;
+  cursorY += (targetY - cursorY) * SMOOTH;
+
+  cursorEl.style.left = cursorX + 'px';
+  cursorEl.style.top  = cursorY + 'px';
+  ringEl.style.left   = cursorX + 'px';
+  ringEl.style.top    = cursorY + 'px';
+
+  // Dwell click
+  checkDwell();
+
+  requestAnimationFrame(processFrame);
+}
+
+// ═══════════════════════════════════════════════════════
+// DWELL CLICK
+// ═══════════════════════════════════════════════════════
+function checkDwell() {
+  const el  = document.elementFromPoint(cursorX, cursorY);
+  const btn = el ? el.closest('.gaze-btn') : null;
+
+  if (btn !== currentHovered) {
+    if (currentHovered) {
+      currentHovered.classList.remove('hovered');
+      currentHovered.querySelector('.pbar').style.width = '0%';
+    }
+    currentHovered = btn;
+    gazeStart = btn ? Date.now() : null;
+    cursorEl.classList.remove('dwelling');
+    ringEl.style.display = 'none';
+    ringFill.style.strokeDashoffset = CIRCUMFERENCE;
+  }
+
+  if (currentHovered && gazeStart) {
+    currentHovered.classList.add('hovered');
+    const elapsed = Date.now() - gazeStart;
+    const frac    = Math.min(elapsed / DWELL_MS, 1);
+
+    currentHovered.querySelector('.pbar').style.width = (frac*100) + '%';
+    cursorEl.classList.add('dwelling');
+    ringEl.style.display = 'block';
+    ringFill.style.strokeDashoffset = CIRCUMFERENCE * (1 - frac);
+
+    if (frac >= 1) {
+      activateBtn(currentHovered);
+      gazeStart = Date.now() + 1000; // cooldown
+    }
+  }
+}
+
+function activateBtn(btn) {
+  btn.classList.remove('hovered');
+  btn.classList.add('activated');
+  btn.querySelector('.pbar').style.width = '0%';
+  cursorEl.classList.remove('dwelling');
+  ringEl.style.display = 'none';
+  ringFill.style.strokeDashoffset = CIRCUMFERENCE;
+
+  const label = btn.querySelector('span:not(.icon)').textContent;
+  addLog('✅ ' + label);
+  setTimeout(() => btn.classList.remove('activated'), 500);
+}
+
+// ═══════════════════════════════════════════════════════
+// LOG
+// ═══════════════════════════════════════════════════════
+let logs = [];
+function addLog(msg) {
+  logs.unshift(msg);
+  if (logs.length > 3) logs.pop();
+  logEl.innerHTML = logs
+    .map((l,i) => `<div style="opacity:${1 - i*0.3};color:${i===0?'#63d3ff':'#3a5a6a'}">${l}</div>`)
+    .join('');
+}
+
+// Start pętli
+requestAnimationFrame(processFrame);
+</script>
+</body>
+</html>
